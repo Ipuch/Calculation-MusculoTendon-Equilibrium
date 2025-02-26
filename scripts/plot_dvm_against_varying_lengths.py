@@ -385,7 +385,7 @@ def main() -> None:
     print(r"\label{tab:equilibrated_muscle_fiber_velocity}")
     print(r"\end{table}")
 
-    if plot_graphs:
+    def plot_matplotlib(results, ratios, dts, model, colors, reference_index):
         for ratio in ratios:
             for dt in dts:
                 data = (
@@ -448,6 +448,131 @@ def main() -> None:
 
                 plt.tight_layout()
         plt.show()
+
+    def plot_plotly(results, ratios, dts, model, colors, reference_index):
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        
+        # Convert matplotlib single-letter colors to plotly full color names
+        mpl_to_plotly_colors = {
+            'b': 'blue',
+            'g': 'green', 
+            'r': 'red',
+            'c': 'cyan',
+            'm': 'magenta',
+            'y': 'yellow',
+            'k': 'black',
+            'w': 'white'
+        }
+        
+        plotly_colors = [mpl_to_plotly_colors.get(color, color) for color in colors]
+        colors = plotly_colors
+
+
+        
+        for ratio in ratios:
+            for dt in dts:
+                data = (
+                    results[str(ratio)][str(dt)] if str(ratio) in results and str(dt) in results[str(ratio)] else None
+                )
+                if data is None:
+                    continue
+
+                t = np.array(data["t"])
+                muscles_fiber_velocity = np.array(data["muscles_fiber_velocity"])
+                muscles_force = np.array(data["muscles_force"])
+                equilibrated_t_indices = np.array(data["equilibrated_t_indices"])
+
+                fig = make_subplots(
+                    rows=3,
+                    cols=1,
+                    subplot_titles=("Muscle fiber velocity", "Muscle force", "Integrated impulse difference"),
+                )
+
+                for m in range(len(model.muscles)):
+                    # Plot muscle velocities
+                    fig.add_trace(
+                        go.Scatter(
+                            x=t,
+                            y=muscles_fiber_velocity[:, m],
+                            name=model.muscles[m].label,
+                            mode="lines+markers",
+                            marker=dict(color=colors[m]),
+                            showlegend=True,
+                        ),
+                        row=1,
+                        col=1,
+                    )
+                    if equilibrated_t_indices[m] is not None:
+                        fig.add_vline(
+                            x=t[equilibrated_t_indices[m]],
+                            line_dash="dash",
+                            line_color=colors[m],
+                            row=1,
+                            col=1,
+                        )
+
+                    # Plot muscle forces
+                    fig.add_trace(
+                        go.Scatter(
+                            x=t,
+                            y=muscles_force[:, m],
+                            name=model.muscles[m].label,
+                            mode="lines+markers",
+                            marker=dict(color=colors[m]),
+                            showlegend=False,
+                        ),
+                        row=2,
+                        col=1,
+                    )
+                    if equilibrated_t_indices[m] is not None:
+                        fig.add_vline(
+                            x=t[equilibrated_t_indices[m]],
+                            line_dash="dash",
+                            line_color=colors[m],
+                            row=2,
+                            col=1,
+                        )
+
+                    # Plot integrated impulse difference
+                    cum_diff_force = np.cumsum(muscles_force[:, m] - muscles_force[:, reference_index])
+                    impulse = np.zeros_like(muscles_force[:, m])
+                    impulse[1:] = (cum_diff_force[1:] + cum_diff_force[:-1]) * (t[1:] - t[:-1]) / 2
+                    fig.add_trace(
+                        go.Scatter(
+                            x=t,
+                            y=impulse,
+                            name=model.muscles[m].label,
+                            mode="lines+markers",
+                            marker=dict(color=colors[m]),
+                            showlegend=False,
+                        ),
+                        row=3,
+                        col=1,
+                    )
+                    if equilibrated_t_indices[m] is not None:
+                        fig.add_vline(
+                            x=t[equilibrated_t_indices[m]],
+                            line_dash="dash",
+                            line_color=colors[m],
+                            row=3,
+                            col=1,
+                        )
+
+                fig.update_layout(
+                    title=f"Muscle fiber velocity and force for a ratio of {ratio} at dt = {dt}",
+                    height=900,
+                )
+                fig.update_xaxes(title_text="Time (s)", row=3, col=1)
+                fig.update_yaxes(title_text="Muscle fiber velocity (m/s)", row=1, col=1)
+                fig.update_yaxes(title_text="Muscle force (N)", row=2, col=1)
+                fig.update_yaxes(title_text="Integrated impulse difference (N*s)", row=3, col=1)
+
+                fig.show()
+
+    if plot_graphs:
+        # plot_matplotlib(results, ratios, dts, model, colors, reference_index)
+        plot_plotly(results, ratios, dts, model, colors, reference_index)
 
 
 if __name__ == "__main__":

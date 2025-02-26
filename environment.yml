@@ -9,3 +9,4 @@ dependencies:
 - scipy
 - pytest
 - pyomeca>=2024.0.0
+- plotly
