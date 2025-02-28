@@ -109,12 +109,13 @@ class ComputeMuscleFiberLengthInstantaneousEquilibrium(ComputeMuscleFiberLengthA
         if not isinstance(muscle, MuscleHillModelFlexibleTendon):
             raise ValueError("The muscle model must be a flexible tendon to compute the instantaneous equilibrium")
 
+        # Compute the tendon length
+        muscle_tendon_length = biorbd_muscle.musculoTendonLength(model_kinematic_updated, q).to_mx()
+
         # Alias for the MX variables
         activation_mx = MX.sym("activation", 1, 1)
         muscle_fiber_length_mx = self.mx_variable
 
-        # Compute the tendon length
-        muscle_tendon_length = biorbd_muscle.musculoTendonLength(model_kinematic_updated, q).to_mx()
         tendon_length = muscle.compute_tendon_length(
             muscle_tendon_length=muscle_tendon_length, muscle_fiber_length=muscle_fiber_length_mx
         )
@@ -141,6 +142,29 @@ class ComputeMuscleFiberLengthInstantaneousEquilibrium(ComputeMuscleFiberLengthA
         newton_method = rootfinder("newton_method", "newton", equality_constraint, {"error_on_fail": True})
         # Evaluate the muscle fiber length
         return newton_method(i0=0, i1=activation, i2=q)["o0"]
+
+    def from_total_length_and_activation(self, muscle, activation, total_length):
+        muscle_fiber_length_mx = self.mx_variable
+
+        tendon_length = muscle.compute_tendon_length(
+            muscle_tendon_length=total_length, muscle_fiber_length=muscle_fiber_length_mx
+        )
+
+        force_tendon = muscle.compute_tendon_force(tendon_length=tendon_length)
+        force_muscle = muscle.compute_muscle_force(
+            activation=activation, muscle_fiber_length=muscle_fiber_length_mx, muscle_fiber_velocity=0
+        )
+
+        equality_constraint = Function(
+            "g",
+            [
+                muscle_fiber_length_mx,
+            ],
+            [force_muscle - force_tendon],
+        )
+
+        newton_method = rootfinder("newton_method", "newton", equality_constraint, {"error_on_fail": True})
+        return newton_method(i0=0)["o0"]
 
     @property
     def copy(self) -> Self:

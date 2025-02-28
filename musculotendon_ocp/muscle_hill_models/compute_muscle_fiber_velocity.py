@@ -299,6 +299,19 @@ class ComputeMuscleFiberVelocityFlexibleTendonLinearized(ComputeMuscleFiberVeloc
         # Compute necessary variables
         biorbd_muscle.updateOrientations(model_kinematic_updated, q)
         muscle_tendon_length = biorbd_muscle.musculoTendonLength(model_kinematic_updated, q).to_mx()
+
+        return self.compute_denormalize_muscle_fiber_velocity(
+            muscle, activation, muscle_fiber_length, muscle_fiber_velocity_initial_guess, muscle_tendon_length
+        )
+
+    @staticmethod
+    def compute_denormalize_muscle_fiber_velocity(
+        muscle: MuscleHillModelAbstract,
+        activation: MX,
+        muscle_fiber_length: MX,
+        muscle_fiber_velocity_initial_guess: MX,
+        muscle_tendon_length: MX,
+    ):
         tendon_length = muscle.compute_tendon_length(muscle_tendon_length, muscle_fiber_length)
 
         # Compute some normalized values
@@ -311,19 +324,19 @@ class ComputeMuscleFiberVelocityFlexibleTendonLinearized(ComputeMuscleFiberVeloc
         force_active = muscle.compute_force_active(normalized_length)
         normalized_tendon_force = muscle.compute_tendon_force(tendon_length) / muscle.maximal_force
 
-        # Compute linear approximation of the muscle fiber velocity
+        # Compute the derivatives
         derivative = muscle.compute_force_velocity.first_derivative(normalized_velocity)
+
+        # Compute the linear approximation of the muscle fiber velocity
         slope = derivative
         bias = -derivative * normalized_velocity + muscle.compute_force_velocity(normalized_velocity)
 
-        muscle_velocity = muscle.denormalize_muscle_fiber_velocity(
+        return muscle.denormalize_muscle_fiber_velocity(
             normalized_muscle_fiber_velocity=(
                 (normalized_tendon_force / cos(pennation_angle)) - force_passive - bias * activation * force_active
             )
             / (slope * activation * force_active + muscle.compute_force_damping.factor)
         )
-
-        return muscle_velocity
 
     @property
     def copy(self) -> Self:
@@ -367,6 +380,19 @@ class ComputeMuscleFiberVelocityFlexibleTendonQuadratic(ComputeMuscleFiberVeloci
         # Compute necessary variables
         biorbd_muscle.updateOrientations(model_kinematic_updated, q)
         muscle_tendon_length = biorbd_muscle.musculoTendonLength(model_kinematic_updated, q).to_mx()
+
+        return self.compute_denormalize_muscle_fiber_velocity(
+            muscle, activation, muscle_fiber_length, muscle_fiber_velocity_initial_guess, muscle_tendon_length
+        )
+
+    @staticmethod
+    def compute_denormalize_muscle_fiber_velocity(
+        muscle: MuscleHillModelAbstract,
+        activation: MX,
+        muscle_fiber_length: MX,
+        muscle_fiber_velocity_initial_guess: MX,
+        muscle_tendon_length: MX,
+    ):
         tendon_length = muscle.compute_tendon_length(muscle_tendon_length, muscle_fiber_length)
 
         # Compute some normalized values
@@ -414,7 +440,16 @@ class ComputeMuscleFiberVelocityFlexibleTendonQuadratic(ComputeMuscleFiberVeloci
             computed_normalized_velocity_minus,
         )
 
-        return muscle.denormalize_muscle_fiber_velocity(normalized_muscle_fiber_velocity=computed_normalized_velocity)
+        # There is an area of the second order polnomial doesn't cross the x-axis.
+        # In this case, the discriminant is negative so we fall back to the linear approximation.
+
+        return if_else(
+            discriminant < 0,
+            ComputeMuscleFiberVelocityFlexibleTendonLinearized.compute_denormalize_muscle_fiber_velocity(
+                muscle, activation, muscle_fiber_length, muscle_fiber_velocity_initial_guess, muscle_tendon_length
+            ),
+            muscle.denormalize_muscle_fiber_velocity(normalized_muscle_fiber_velocity=computed_normalized_velocity),
+        )
 
     @property
     def copy(self) -> Self:
