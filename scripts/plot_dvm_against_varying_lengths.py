@@ -2,6 +2,7 @@ import json
 from functools import partial
 import os
 from typing import Callable
+from itertools import product
 
 from matplotlib import pyplot as plt
 from musculotendon_ocp import (
@@ -108,7 +109,13 @@ def optimize_for_tendon_to_optimal_length_ratio(
 
     delta = []
     for optimized_muscle, muscle in zip(optimized_model.muscles, model.muscles):
-        optimized_muscle.tendon_slack_length = target_ratio * muscle.optimal_length
+        # optimized_muscle.tendon_slack_length = target_ratio * muscle.optimal_length
+        # optimized_muscle.tendon_slack_length = (
+        #     muscle.tendon_slack_length / muscle.optimal_length * target_ratio * muscle.tendon_slack_length
+        # )
+        tot = muscle.optimal_length + muscle.tendon_slack_length
+        optimized_muscle.optimal_length = tot / (1 + target_ratio)
+        optimized_muscle.tendon_slack_length = tot - optimized_muscle.optimal_length
         delta.append(optimized_muscle.tendon_slack_length - muscle.tendon_slack_length)
 
     # All the delta are supposed to be the same, make sure of this, then use the referenced one
@@ -144,18 +151,20 @@ def optimize_for_tendon_to_optimal_length_ratio(
 def main() -> None:
     ratios = [0.1, 0.2, 0.5, 0.75, 1.0, 1.5, 2.0, 5.0, 10.0]
     dts = [0.0001, 0.0005, 0.001, 0.005, 0.01]
-    # ratios = [5.0, 10.0]
-    # dts = [0.001, 0.005]
 
     load_results = True
     save_path = "results/results.json"
     plot_graphs = True
-    target_force = 500.0
+    target_force = 900
     velocity_threshold = 1e-2
     colors = ["b", "g", "y", "m", "c"]
-    activation_at_start = 0.01
-    activation_at_end = 1.0
-    reference_muscle_label = "Force defects"
+    # activation_at_start = 0.01
+    # activation_at_end = 1.0
+    activation_at_start = 1.0
+    activation_at_end = 0.01
+    # reference_muscle_label = "Force defects"
+    reference_muscle_label = "Velocity defects"
+    # reference_muscle_label = "Linearized"
     model = RigidbodyModels.WithMuscles(
         "../musculotendon_ocp/rigidbody_models/models/one_muscle_holding_a_cube.bioMod",
         muscles=[
@@ -261,7 +270,6 @@ def main() -> None:
                     )
                 )[:, 0]
 
-
                 if any(optimized_q - initial_muscles_fiber_length < 0):
                     raise ValueError(
                         "The initial muscle fiber lengths are greater than the muscle tendon lengths, this is not possible."
@@ -347,6 +355,9 @@ def main() -> None:
                     ]
                 ).squeeze()
 
+                muscle_lengths = np.array(
+                    Function("m", [], [resized_model.muscle_tendon_lengths(optimized_q)])()["o0"]
+                ).squeeze()
                 equilibrated_t_indices = []
                 # Find where the t index where the velocity is negligeable (velocity_threshold)
                 for m in range(len(resized_model.muscles)):
@@ -355,14 +366,46 @@ def main() -> None:
                     )
                     index = np.where(np.abs(normalized_velocity) < velocity_threshold)[0]
                     # By design the index 0 is 0, so skip it
-                    equilibrated_t_indices.append(int(index[1]) if len(index) > 1 else None)
+                    t_m_idx = int(index[1]) if len(index) > 1 else None
+
+                    if not t_m_idx is None:
+                        muscle_length = muscle_lengths[m]
+                        almost_equal = np.allclose(
+                            tendon_lengths[t_m_idx, m] + muscles_fiber_length[t_m_idx, m], muscle_length, atol=1e-5
+                        )
+                        if not almost_equal:
+                            print(
+                                f"Muscle {m} did not reach equilibrium. Expected length: {muscle_length}, "
+                                f"actual length: {tendon_lengths[t_m_idx, m] + muscles_fiber_length[t_m_idx, m]}"
+                            )
+                            equilibrated_t_indices.append(None)
+
+                        if muscles_fiber_length[t_m_idx, m] < 0:
+                            print(
+                                f"Muscle {m} reached a negative fiber length. Expected length: {muscle_length}, "
+                                f"actual length: {muscles_fiber_length[t_m_idx, m]}"
+                            )
+                            equilibrated_t_indices.append(None)
+
+                        if muscles_fiber_length[t_m_idx, m] > muscle_length:
+                            print(
+                                f"Muscle {m} reached a fiber length greater than the muscle length. Expected length: {muscle_length}, "
+                                f"actual length: {muscles_fiber_length[t_m_idx, m]}"
+                            )
+                            equilibrated_t_indices.append(None)
+
+                        no1 = muscles_fiber_length[t_m_idx, m] > muscle_length
+                        no2 = muscles_fiber_length[t_m_idx, m] < 0
+                        no3 = not np.allclose(
+                            tendon_lengths[t_m_idx, m] + muscles_fiber_length[t_m_idx, m], muscle_length, atol=1e-5
+                        )
+                        if not no1 and not no2 and not no3:
+                            equilibrated_t_indices.append(t_m_idx)
+                    else:
+                        equilibrated_t_indices.append(t_m_idx)
 
                 results[str(ratio)][str(dt)] = {
-                    "muscle_tendon_lengths": np.array(
-                        Function("hey", [], [resized_model.muscle_tendon_lengths(optimized_q)])()["o0"]
-                    )
-                    .squeeze()
-                    .tolist(),
+                    "muscle_tendon_lengths": muscle_lengths.tolist(),
                     "t": t.tolist(),
                     "tendon_length": tendon_lengths.tolist(),
                     "muscles_fiber_length": muscles_fiber_length.tolist(),
@@ -383,31 +426,35 @@ def main() -> None:
         )
 
     # Build the latex table from the results
-    header_title = r"\multicolumn{" + str(len(dts)) + r"}{c}{Time to equilibrium (s)}"
-    header_dt = " & ".join([f"dt = {dt:.4f}" for dt in dts])
+    for muscle_idx in range(muscle_count):
+        header_title = r"\multicolumn{" + str(len(dts)) + r"}{c}{Time to equilibrium (s)}"
+        header_dt = " & ".join([f"dt = {dt:.4f}" for dt in dts])
 
-    print(r"\begin{table}[h]")
-    print(r"\centering")
-    print(r"\begin{tabular}{>{\raggedright}p{3.5cm}" + "c" * len(dts) + r"}")
-    print(r"\multirow{2}{3.5cm}{Ratio slack length to optimal length} & " + header_title + r"\\")
-    print(r" & " + header_dt + r"\\")
-    print(r"\hline")
+        print(r"\begin{table}[h]")
+        print(r"\centering")
+        print(r"\begin{tabular}{>{\raggedright}p{3.5cm}" + "c" * len(dts) + r"}")
+        print(r"\multirow{2}{3.5cm}{Ratio slack length to optimal length} & " + header_title + r"\\")
+        print(r" & " + header_dt + r"\\")
+        print(r"\hline")
 
-    for ratio in ratios:
-        row = f"{ratio:.1f}"
-        for dt in dts:
-            data = results[str(ratio)][str(dt)] if str(ratio) in results and str(dt) in results[str(ratio)] else None
-            equilibrated_t_index = data["equilibrated_t_indices"][reference_index] if data is not None else None
-            row += " & -" if equilibrated_t_index is None else f" & {data['t'][equilibrated_t_index]:.4f}"
-        row += r"\\"
-        print(row)
+        for ratio in ratios:
+            row = f"{ratio:.1f}"
+            for dt in dts:
+                data = (
+                    results[str(ratio)][str(dt)] if str(ratio) in results and str(dt) in results[str(ratio)] else None
+                )
+                # equilibrated_t_index = data["equilibrated_t_indices"][reference_index] if data is not None else None
+                equilibrated_t_index = data["equilibrated_t_indices"][muscle_idx] if data is not None else None
+                row += " & -" if equilibrated_t_index is None else f" & {data['t'][equilibrated_t_index]:.4f}"
+            row += r"\\"
+            print(row)
 
-    print(r"\end{tabular}")
-    print(
-        r"\caption{Time to reach an equilibrated muscle fiber velocity for different tendon to optimal length ratios and time steps}"
-    )
-    print(r"\label{tab:equilibrated_muscle_fiber_velocity}")
-    print(r"\end{table}")
+        print(r"\end{tabular}")
+        print(
+            r"\caption{Time to reach an equilibrated muscle fiber velocity for different tendon to optimal length ratios and time steps}"
+        )
+        print(r"\label{tab:equilibrated_muscle_fiber_velocity}")
+        print(r"\end{table}")
 
     if plot_graphs:
         from utils_dvm_against_varying_length_ratios import plot_matplotlib, plot_plotly

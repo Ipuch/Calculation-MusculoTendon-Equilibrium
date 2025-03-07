@@ -169,6 +169,7 @@ def _perform_precise_integration(
     values[:, 0] = y0
 
     for i in range(steps_count):
+        print(f"Integrating step {i + 1}/{steps_count}")
         out = solver(dynamics_func, t_span=[i * dt, (i + 1) * dt], y0=y0)
         if solver == _solve_ivp_rk45:
             out = out.y[:, -1]
