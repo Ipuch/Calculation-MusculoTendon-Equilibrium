@@ -106,8 +106,8 @@ def plot_plotly(results, ratios, dts, model, colors, reference_index):
                 cols=2,
                 subplot_titles=(
                     "Muscle length and tendon length",
-                    "Muscle fiber velocity",
                     "Muscle force",
+                    "Muscle fiber velocity",
                     "Integrated impulse difference",
                 ),
             )
